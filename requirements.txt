@@ -1,0 +1,24 @@
+# FastAPI and server
+fastapi
+uvicorn
+
+# Pydantic for data validation
+pydantic
+
+# LangGraph and LangChain
+langgraph
+langchain-google-genai
+langchain-core
+
+# Web scraping
+requests
+beautifulsoup4
+
+# Environment variables
+python-dotenv
+
+# Timezone support (used by generated tools)
+pytz
+
+# Optional: typing support (Python >=3.11 has it built-in)
+typing-extensions

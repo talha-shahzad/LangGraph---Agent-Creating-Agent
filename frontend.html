@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LangGraph Tool Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .code-block {
+            background: #1e293b;
+            color: #e2e8f0;
+            border-radius: 8px;
+            padding: 1rem;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+        }
+    </style>
+</head>
+
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-7xl">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-indigo-900 mb-2">🤖 LangGraph Tool Agent</h1>
+            <p class="text-gray-600">Self-improving AI agent with dynamic tool generation</p>
+        </div>
+
+        <!-- Main Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Chat Section -->
+            <div class="lg:col-span-2">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4">💬 Chat Interface</h2>
+
+                    <!-- Chat Messages -->
+                    <div id="chatMessages"
+                        class="h-96 overflow-y-auto mb-4 border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div class="text-gray-400 text-center py-8">
+                            Start by asking a question or requesting a tool...
+                        </div>
+                    </div>
+
+                    <!-- Input Area -->
+                    <div class="flex gap-2">
+                        <input type="text" id="queryInput" placeholder="Ask anything or request a new tool..."
+                            class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            onkeypress="if(event.key === 'Enter') sendQuery()" />
+                        <button onclick="sendQuery()"
+                            class="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold">
+                            Send
+                        </button>
+                    </div>
+
+                    <!-- Examples -->
+                    <div class="mt-4">
+                        <p class="text-sm text-gray-600 mb-2">💡 Try these examples:</p>
+
+                        <!-- Direct Answer Examples -->
+                        <div class="mb-2">
+                            <p class="text-xs text-gray-500 mb-1">💬 Direct Answer (from AI knowledge):</p>
+                            <div class="flex flex-wrap gap-2">
+                                <button onclick="setQuery('what is generative AI?')"
+                                    class="text-xs px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full hover:bg-indigo-200">
+                                    What is GenAI?
+                                </button>
+                                <button onclick="setQuery('how does LangGraph work?')"
+                                    class="text-xs px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full hover:bg-indigo-200">
+                                    Explain LangGraph
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Execute Existing Tools -->
+                        <div class="mb-2">
+                            <p class="text-xs text-gray-500 mb-1">🔍 Existing Tools (search/scrape):</p>
+                            <div class="flex flex-wrap gap-2">
+                                <button onclick="setQuery('search the web for latest AI news')"
+                                    class="text-xs px-3 py-1 bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200">
+                                    🔍 Search AI News
+                                </button>
+                                <button onclick="setQuery('scrape content from https://news.ycombinator.com')"
+                                    class="text-xs px-3 py-1 bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200">
+                                    🌐 Scrape HackerNews
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Generate New Tools -->
+                        <div>
+                            <p class="text-xs text-gray-500 mb-1">🔧 Generate New Tools (generic & reusable):</p>
+                            <div class="flex flex-wrap gap-2">
+                                <button onclick="setQuery('what time is it in Hawaii?')"
+                                    class="text-xs px-3 py-1 bg-green-100 text-green-700 rounded-full hover:bg-green-200">
+                                    ⏰ Timezone Tool
+                                </button>
+                                <button onclick="setQuery('convert 100 USD to EUR')"
+                                    class="text-xs px-3 py-1 bg-green-100 text-green-700 rounded-full hover:bg-green-200">
+                                    💱 Currency Tool
+                                </button>
+                                <button onclick="setQuery('calculate fibonacci sequence up to 20')"
+                                    class="text-xs px-3 py-1 bg-green-100 text-green-700 rounded-full hover:bg-green-200">
+                                    🔢 Math Tool
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sidebar -->
+            <div class="space-y-6">
+                <!-- Pending Approvals -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4">⏳ Pending Approvals</h2>
+                    <div id="pendingApprovals" class="space-y-3">
+                        <p class="text-sm text-gray-400">No pending approvals</p>
+                    </div>
+                    <button onclick="loadPendingTools()"
+                        class="mt-4 w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition text-sm">
+                        Refresh
+                    </button>
+                </div>
+
+                <!-- Tools Overview -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4">🛠️ Tools Registry</h2>
+                    <button onclick="showAllTools()"
+                        class="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition">
+                        View All Tools
+                    </button>
+                    <div id="toolsCount" class="mt-4 text-sm text-gray-600">
+                        Loading...
+                    </div>
+                </div>
+
+                <!-- Status -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4">📊 Status</h2>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Model:</span>
+                            <span class="font-semibold text-indigo-600">Gemini 1.5 Flash</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">API Status:</span>
+                            <span class="font-semibold text-green-600">Online</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tool Detail Modal -->
+    <div id="toolModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div class="p-6 border-b border-gray-200 flex justify-between items-center sticky top-0 bg-white">
+                <h2 class="text-2xl font-bold text-gray-800">Tool Details</h2>
+                <button onclick="closeToolModal()" class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+            </div>
+            <div id="toolModalContent" class="p-6">
+                <!-- Content injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- All Tools Modal -->
+    <div id="allToolsModal"
+        class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
+            <div class="p-6 border-b border-gray-200 flex justify-between items-center sticky top-0 bg-white">
+                <h2 class="text-2xl font-bold text-gray-800">Tool Registry</h2>
+                <button onclick="closeAllToolsModal()"
+                    class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+            </div>
+            <div id="allToolsContent" class="p-6">
+                <!-- Content injected here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:3000' : '';
+        const sessionId = Math.random().toString(36).substring(7);
+
+        // Send query to agent
+        async function sendQuery() {
+            const input = document.getElementById('queryInput');
+            const query = input.value.trim();
+
+            if (!query) return;
+
+            // Add user message
+            addMessage('user', query);
+            input.value = '';
+
+            // Show loading
+            addMessage('agent', 'Processing...', true);
+
+            try {
+                const response = await fetch(`${API_BASE}/api/query`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query, session_id: sessionId })
+                });
+
+                const data = await response.json();
+
+                // Remove loading message
+                removeLastMessage();
+
+                if (data.pending_approval) {
+                    addMessage('agent', '🔧 New tool generated! Please review and approve it in the sidebar.');
+                    loadPendingTools();
+                } else if (data.result) {
+                    addMessage('agent', data.result);
+                } else {
+                    addMessage('agent', data.message);
+                }
+            } catch (error) {
+                removeLastMessage();
+                addMessage('agent', '❌ Error: ' + error.message);
+            }
+        }
+
+        // Add message to chat
+        function addMessage(sender, text, isLoading = false) {
+            const messagesDiv = document.getElementById('chatMessages');
+
+            // Remove "Start by asking" message if present
+            if (messagesDiv.children.length === 1 &&
+                messagesDiv.children[0].classList.contains('text-gray-400')) {
+                messagesDiv.innerHTML = '';
+            }
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `mb-4 fade-in ${sender === 'user' ? 'text-right' : 'text-left'}`;
+
+            const bubble = document.createElement('div');
+            bubble.className = `inline-block px-4 py-2 rounded-lg max-w-[80%] ${sender === 'user'
+                ? 'bg-indigo-600 text-white'
+                : 'bg-gray-200 text-gray-800'
+                }`;
+
+            if (isLoading) {
+                bubble.innerHTML = '<span class="animate-pulse">●●●</span>';
+            } else {
+                bubble.textContent = text;
+            }
+
+            messageDiv.appendChild(bubble);
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function removeLastMessage() {
+            const messagesDiv = document.getElementById('chatMessages');
+            if (messagesDiv.lastChild) {
+                messagesDiv.removeChild(messagesDiv.lastChild);
+            }
+        }
+
+        // Load pending tools
+        async function loadPendingTools() {
+            try {
+                const response = await fetch(`${API_BASE}/api/pending-tools`);
+                const data = await response.json();
+
+                const container = document.getElementById('pendingApprovals');
+
+                if (data.tools && data.tools.length > 0) {
+                    container.innerHTML = data.tools.map(tool => `
+                        <div class="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                            <h4 class="font-semibold text-gray-800 text-sm">${tool.name}</h4>
+                            <p class="text-xs text-gray-600 mt-1">${tool.description}</p>
+                            <div class="flex gap-2 mt-3">
+                                <button onclick="approveTool('${tool.name}', true)"
+                                    class="flex-1 px-3 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700">
+                                    ✓ Approve
+                                </button>
+                                <button onclick="approveTool('${tool.name}', false)"
+                                    class="flex-1 px-3 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700">
+                                    ✗ Reject
+                                </button>
+                            </div>
+                            <button onclick="viewToolDetails('${tool.name}')"
+                                class="w-full mt-2 px-3 py-1 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200">
+                                View Code
+                            </button>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = '<p class="text-sm text-gray-400">No pending approvals</p>';
+                }
+            } catch (error) {
+                console.error('Error loading pending tools:', error);
+            }
+        }
+
+        // Approve/reject tool
+        async function approveTool(toolName, approved) {
+            const approvedBy = prompt('Your name:') || 'anonymous';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/approve-tool`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tool_name: toolName,
+                        approved,
+                        approved_by: approvedBy
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    addMessage('agent', approved ? `✅ Tool "${toolName}" approved!` : `❌ Tool "${toolName}" rejected.`);
+                    loadPendingTools();
+                    updateToolsCount();
+                }
+            } catch (error) {
+                addMessage('agent', '❌ Error: ' + error.message);
+            }
+        }
+
+        // View tool details
+        async function viewToolDetails(toolName) {
+            try {
+                const response = await fetch(`${API_BASE}/api/all-tools`);
+                const data = await response.json();
+                const tool = data.tools.find(t => t.name === toolName);
+
+                if (tool) {
+                    document.getElementById('toolModalContent').innerHTML = `
+                        <div class="space-y-4">
+                            <div>
+                                <h3 class="font-semibold text-gray-700">Name:</h3>
+                                <p class="text-gray-800">${tool.name}</p>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold text-gray-700">Description:</h3>
+                                <p class="text-gray-800">${tool.description}</p>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold text-gray-700">Parameters:</h3>
+                                <pre class="code-block">${JSON.stringify(tool.parameters, null, 2)}</pre>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold text-gray-700">Code:</h3>
+                                <pre class="code-block">${tool.code}</pre>
+                            </div>
+                            <div class="flex gap-4 text-sm text-gray-600">
+                                <div>Status: <span class="font-semibold ${tool.status === 'active' ? 'text-green-600' : 'text-yellow-600'}">${tool.status}</span></div>
+                                <div>Usage: <span class="font-semibold">${tool.usage_count || 0}</span></div>
+                                ${tool.approved_by ? `<div>Approved by: <span class="font-semibold">${tool.approved_by}</span></div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                    document.getElementById('toolModal').classList.remove('hidden');
+                }
+            } catch (error) {
+                console.error('Error viewing tool:', error);
+            }
+        }
+
+        function closeToolModal() {
+            document.getElementById('toolModal').classList.add('hidden');
+        }
+
+        // Show all tools
+        async function showAllTools() {
+            try {
+                const response = await fetch(`${API_BASE}/api/all-tools`);
+                const data = await response.json();
+
+                const staticTools = [
+                    { name: 'web_search', description: 'Search the web for information', status: 'static', usage_count: '-' },
+                    { name: 'scrape_webpage', description: 'Extract text content from a webpage', status: 'static', usage_count: '-' }
+                ];
+
+                const allTools = [...staticTools, ...data.tools];
+
+                document.getElementById('allToolsContent').innerHTML = `
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        ${allTools.map(tool => `
+                        <div class="border border-gray-200 rounded-lg p-4 hover:shadow-lg transition">
+                            <div class="flex justify-between items-start mb-2">
+                                <h3 class="font-semibold text-gray-800">${tool.name}</h3>
+                                <span class="px-2 py-1 text-xs rounded ${tool.status === 'active' ? 'bg-green-100 text-green-700' :
+                        tool.status === 'static' ? 'bg-blue-100 text-blue-700' :
+                            tool.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                                'bg-gray-100 text-gray-700'
+                    }">${tool.status}</span>
+                            </div>
+                            <p class="text-sm text-gray-600 mb-3">${tool.description}</p>
+                            <div class="flex justify-between items-center text-xs text-gray-500">
+                                <span>Usage: ${tool.usage_count}</span>
+                                ${tool.code ? `
+                                <button onclick="viewToolDetails('${tool.name}')"
+                                    class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200">
+                                    View Code
+                                </button>
+                                ` : ''}
+                            </div>
+                        </div>
+                        `).join('')}
+                    </div>
+                `;
+                document.getElementById('allToolsModal').classList.remove('hidden');
+            } catch (error) {
+                console.error('Error loading all tools:', error);
+            }
+        }
+
+        function closeAllToolsModal() {
+            document.getElementById('allToolsModal').classList.add('hidden');
+        }
+
+        // Update tools count
+        async function updateToolsCount() {
+            try {
+                const response = await fetch(`${API_BASE}/api/all-tools`);
+                const data = await response.json();
+                const activeTools = data.tools.filter(t => t.status === 'active').length;
+                const pendingTools = data.tools.filter(t => t.status === 'pending').length;
+
+                document.getElementById('toolsCount').innerHTML = `
+                    <div class="space-y-1">
+                        <div class="flex justify-between">
+                            <span>Active:</span>
+                            <span class="font-semibold text-green-600">${activeTools}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Pending:</span>
+                            <span class="font-semibold text-yellow-600">${pendingTools}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Total:</span>
+                            <span class="font-semibold">${data.tools.length + 2}</span>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error updating tools count:', error);
+            }
+        }
+
+        function setQuery(text) {
+            document.getElementById('queryInput').value = text;
+        }
+
+        // Initialize
+        loadPendingTools();
+        updateToolsCount();
+        setInterval(loadPendingTools, 10000); // Refresh every 10 seconds
+    </script>
+</body>
+
+</html>
