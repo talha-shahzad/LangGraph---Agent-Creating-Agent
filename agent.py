@@ -570,20 +570,70 @@ Respond with ONLY ONE of these three options:
                 state["next_step"] = "direct_answer"
                 return state
             
-            # Check static tools first
-            for tool_name, tool in self.static_tools.items():
-                if tool_name in query.lower() or any(word in query.lower() for word in tool['description'].lower().split()):
-                    state["existing_tool"] = tool
+            # If intent is need_new_tool, we should only check if a dynamic tool already exists
+            # that matches this specific need. If not, go to generate.
+            
+            # Get all available tools for the LLM to choose from
+            dynamic_tools = self.registry.get_all_tools()
+            active_dynamic_tools = [t for t in dynamic_tools if t['status'] == 'active']
+            
+            available_tools_info = []
+            for name, tool in self.static_tools.items():
+                available_tools_info.append(f"- {name}: {tool['description']}")
+            for tool in active_dynamic_tools:
+                available_tools_info.append(f"- {tool['name']}: {tool['description']}")
+            
+            tools_list_str = "\n".join(available_tools_info)
+            
+            prompt = f"""Analyze the user query and the available tools. 
+Determine if any EXISTING tool can fulfill the request.
+
+USER QUERY: \"{query}\"
+INTENT: {intent}
+
+AVAILABLE TOOLS:
+{tools_list_str}
+
+RULES:
+1. If intent is 'need_new_tool', only select an existing tool if it EXACTLY matches the category (e.g., a 'timezone_converter' tool for a time query).
+2. If intent is 'execute_existing', select the most appropriate tool (e.g., 'web_search' or 'scrape_webpage').
+3. If NO existing tool is a good match, respond with 'NONE'.
+
+Respond with ONLY the name of the tool or 'NONE'."""
+
+            await asyncio.sleep(2)
+            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+            selected_tool_name = self._extract_text(response.content).strip()
+            
+            if selected_tool_name != "NONE":
+                # Find the tool details
+                tool_details = None
+                if selected_tool_name in self.static_tools:
+                    # Store serializable version of static tool
+                    static_tool = self.static_tools[selected_tool_name]
+                    tool_details = {
+                        'name': static_tool['name'],
+                        'description': static_tool['description'],
+                        'type': 'static'
+                    }
+                else:
+                    for t in active_dynamic_tools:
+                        if t['name'] == selected_tool_name:
+                            tool_details = t
+                            break
+                
+                if tool_details:
+                    state["existing_tool"] = tool_details
                     state["next_step"] = "execute"
                     return state
             
-            # Search dynamic tools
-            tools = self.registry.search_tools(query)
-            
-            if tools:
-                state["existing_tool"] = tools[0]
-                state["next_step"] = "execute"
+            # If no tool found or selected
+            if intent == "need_new_tool":
+                state["existing_tool"] = None
+                state["next_step"] = "generate"
             else:
+                # If intent was execute_existing but no tool matched, this is an edge case
+                # We'll try to generate a tool if it seems appropriate, or error out
                 state["existing_tool"] = None
                 state["next_step"] = "generate"
             
@@ -791,10 +841,14 @@ Only return the JSON, nothing else.
         try:
             if state.get("existing_tool"):
                 tool = state["existing_tool"]
+                tool_name = tool['name']
                 
                 # Execute static tool
                 if tool.get("type") == "static":
-                    param_prompt = f"""Extract parameters for the {tool['name']} function from this query:
+                    # Look up the actual function
+                    static_tool_func = self.static_tools[tool_name]['func']
+                    
+                    param_prompt = f"""Extract parameters for the {tool_name} function from this query:
 Query: {state['user_query']}
 Function: {tool['description']}
 
@@ -808,7 +862,7 @@ Return ONLY a JSON object with the parameter values, e.g. {{"query": "search ter
                     params = json.loads(params_match.group())
                     
                     try:
-                        result = tool['func'](**params)
+                        result = static_tool_func(**params)
                         state["execution_result"] = result
                         self.registry.log_execution(tool["name"], params, result, True)
                     except Exception as e:
