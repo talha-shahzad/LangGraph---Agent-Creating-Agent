@@ -9,8 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
+from google import genai
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage
-
 from graph import create_skill_graph
 
 # ============================================================================
@@ -20,6 +21,7 @@ from graph import create_skill_graph
 class QueryRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
+    model_name: Optional[str] = None
 
 class ToolApproval(BaseModel):
     tool_name: str
@@ -51,7 +53,7 @@ app.add_middleware(
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///toolregistry.db")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL_NAME = os.getenv("MODEL_NAME", "Gemini 1.5 Flash")    
+MODEL_NAME = os.getenv("MODEL_NAME", "models/gemini-1.5-flash")    
 
 workflow, manager = create_skill_graph(DATABASE_URL, GEMINI_API_KEY)
 
@@ -76,17 +78,38 @@ async def process_query(request: QueryRequest):
         "messages": [HumanMessage(content=request.query)],
         "user_query": request.query,
         "session_id": session_id,
-        "is_cached": False
+        "is_cached": False,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "actual_cost": 0.0,
+        "cost_saved": 0.0
     }
     
     try:
+        # Use the requested model or fall back to the environment default
+        requested_model = request.model_name or MODEL_NAME
+        
+        # We need to temporarily update the manager's LLM if a different model is requested
+        # For a truly multi-user system, we would instantiate this per request or use a factory
+        if request.model_name and request.model_name != manager.model_name:
+            manager.update_model(request.model_name)
+
         final_state = await workflow.ainvoke(initial_state, config=config)
         
+        # Assemble cost metrics for response
+        metrics = {
+            "input_tokens": final_state.get("input_tokens", 0),
+            "output_tokens": final_state.get("output_tokens", 0),
+            "actual_cost": final_state.get("actual_cost", 0.0),
+            "cost_saved": final_state.get("cost_saved", 0.0)
+        }
+
         if final_state.get("next_step") == "await_approval":
             return QueryResponse(
                 success=True,
                 message="New tool generated and awaiting approval",
-                pending_approval=True
+                pending_approval=True,
+                cost_metrics=metrics
             )
         
         # Get last AI message (the summary)
@@ -103,7 +126,8 @@ async def process_query(request: QueryRequest):
             success=True,
             message="Query processed",
             response=response_text or "No summary produced",
-            result=raw_result
+            result=raw_result,
+            cost_metrics=metrics
         )
     except Exception as e:
         import traceback
@@ -130,8 +154,29 @@ async def approve_tool(approval: ToolApproval):
 
 @app.get("/api/get-model")
 async def get_model():
-    return_name = ' '.join(word.capitalize() for word in str(MODEL_NAME).split('-'))
-    return {"success": True, "model": return_name}
+    model_name = ' '.join(MODEL_NAME.split('-')).capitalize()
+    return {"success": True, "model": model_name}
+
+@app.get("/api/models")
+async def list_models():
+    """Fetches list of available Gemini models for generation."""
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        models = client.models.list()
+        
+        # Filter for models that support content generation
+        gen_models = []
+        for m in models:
+            # The SDK uses supported_actions (list of strings)
+            if "generateContent" in m.supported_actions:
+                gen_models.append({
+                    "name": m.name,
+                    "display_name": m.display_name,
+                    "description": m.description
+                })
+        return {"success": True, "models": gen_models}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

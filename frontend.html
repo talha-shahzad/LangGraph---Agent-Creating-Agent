@@ -151,11 +151,12 @@
                     </div>
 
                     <!-- Input Area -->
-                    <div class="flex gap-2">
-                        <input type="text" id="queryInput" placeholder="Ask anything or request a new tool..."
-                            class="flex-1 px-4 py-3 border border-[var(--border)] rounded-lg bg-black/40 text-white focus:outline-none focus:ring-2 focus:ring-[var(--cyan)] placeholder-gray-500"
-                            onkeypress="if(event.key === 'Enter') sendQuery()" />
-                        <button onclick="sendQuery()" class="px-6 py-3 premium-button rounded-lg font-bold">
+                    <div class="flex items-end gap-2">
+                        <textarea id="queryInput" placeholder="Ask anything or request a new tool..." rows="1"
+                            oninput="this.style.height = ''; this.style.height = Math.min(this.scrollHeight, 200) + 'px'"
+                            class="flex-1 px-4 py-3 border border-[var(--border)] rounded-lg bg-black/40 text-white focus:outline-none focus:ring-2 focus:ring-[var(--cyan)] placeholder-gray-500 resize-none overflow-y-auto max-h-[200px] leading-relaxed"></textarea>
+                        <button onclick="sendQuery()"
+                            class="h-[50px] px-6 py-3 premium-button rounded-lg font-bold flex-shrink-0">
                             Send
                         </button>
                     </div>
@@ -244,14 +245,23 @@
                 <!-- Status -->
                 <div class="glass-card rounded-xl p-6">
                     <h2 class="text-xl font-bold text-white mb-4">📊 Status</h2>
-                    <div class="space-y-2 text-sm">
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Model:</span>
-                            <span class="font-semibold text-[var(--cyan)]" id="modelName"></span>
+                    <div class="space-y-3 text-sm">
+                        <div class="flex items-center">
+                            <span class="text-gray-400 w-[30%] flex-shrink-0">Model:</span>
+                            <div class="w-[70%]">
+                                <select id="modelSelect"
+                                    class="bg-black border border-[var(--border)] rounded px-2 py-1.5 text-xs text-[var(--cyan)] focus:outline-none focus:ring-1 focus:ring-[var(--cyan)] w-full truncate appearance-none cursor-pointer">
+                                    <option value="" class="bg-black">Loading...</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">API Status:</span>
-                            <span class="font-semibold text-green-400">Online</span>
+                        <div class="flex items-center">
+                            <span class="text-gray-400 w-[30%] flex-shrink-0">API Status:</span>
+                            <span class="w-[70%] font-semibold text-green-400">Online</span>
+                        </div>
+                        <div class="flex items-center border-t border-white/5 pt-2 mt-2">
+                            <span class="text-gray-400 w-[30%] flex-shrink-0">Savings:</span>
+                            <span class="w-[70%] font-bold text-yellow-400 truncate" id="totalSavings">$0.000000</span>
                         </div>
                     </div>
                 </div>
@@ -311,10 +321,15 @@
             addMessage('agent', 'Processing...', true);
 
             try {
+                const modelName = document.getElementById('modelSelect').value;
                 const response = await fetch(`${API_BASE}/api/query`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query, session_id: sessionId })
+                    body: JSON.stringify({
+                        query,
+                        session_id: sessionId,
+                        model_name: modelName || undefined
+                    })
                 });
 
                 const data = await response.json();
@@ -589,20 +604,55 @@
         function setQuery(text) {
             document.getElementById('queryInput').value = text;
         }
-        function getmodelname() {
-            fetch(`${API_BASE}/api/get-model`)
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById('modelName').textContent = data.model;
-                })
-                .catch(error => {
-                    console.error('Error getting model name:', error);
-                });
+        async function loadModels() {
+            try {
+                const response = await fetch(`${API_BASE}/api/models`);
+                const data = await response.json();
+                const select = document.getElementById('modelSelect');
+
+                if (data.success && data.models) {
+                    // Save current selection if any
+                    const currentModel = select.value;
+
+                    select.innerHTML = data.models.map(m => `
+                        <option value="${m.name}" title="${m.description}" class="bg-black text-[var(--cyan)]">${m.display_name}</option>
+                    `).join('');
+
+                    // Try to restore previous selection or set from server default
+                    const serverDefaultResponse = await fetch(`${API_BASE}/api/get-model`);
+                    const serverDefaultData = await serverDefaultResponse.json();
+
+                    if (serverDefaultData.success) {
+                        const defaultModel = serverDefaultData.model;
+
+                        // 1. Try exact match
+                        select.value = defaultModel;
+
+                        if (!select.value) {
+                            // 2. Fuzzy matching
+                            const normalizedDefault = defaultModel.toLowerCase().replace(/models\//i, '').replace(/[\s-_]/g, '');
+
+                            for (let i = 0; i < select.options.length; i++) {
+                                const option = select.options[i];
+                                const normalizedOption = option.value.toLowerCase().replace(/models\//i, '').replace(/[\s-_]/g, '');
+
+                                if (normalizedOption === normalizedDefault) {
+                                    select.value = option.value;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading models:', error);
+                document.getElementById('modelSelect').innerHTML = '<option value="">Error loading</option>';
+            }
         }
         // Initialize
         loadPendingTools();
         updateToolsCount();
-        getmodelname();
+        loadModels();
         setInterval(loadPendingTools, 10000); // Refresh every 10 seconds
     </script>
 </body>

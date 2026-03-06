@@ -26,7 +26,11 @@ async def verify_system():
     state = {
         "messages": [HumanMessage(content=query)],
         "user_query": query,
-        "session_id": "test_session_new"
+        "session_id": "test_session_new",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "actual_cost": 0.0,
+        "cost_saved": 0.0
     }
     
     result = await workflow.ainvoke(state, config=config)
@@ -43,7 +47,11 @@ async def verify_system():
         state2 = {
             "messages": [HumanMessage(content=query)],
             "user_query": query,
-            "session_id": "test_session_new"
+            "session_id": "test_session_new",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "actual_cost": 0.0,
+            "cost_saved": 0.0
         }
         result2 = await workflow.ainvoke(state2, config=config)
         print(f"Reuse Route: {result2.get('route')}")

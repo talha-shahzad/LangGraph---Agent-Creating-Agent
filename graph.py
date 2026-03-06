@@ -29,6 +29,11 @@ class AgentState(TypedDict):
     execution_result: Optional[str]
     next_step: Optional[str]
     is_cached: bool
+    # Flattened metrics for simpler LangGraph state management
+    input_tokens: Annotated[int, operator.add]
+    output_tokens: Annotated[int, operator.add]
+    actual_cost: Annotated[float, operator.add]
+    cost_saved: Annotated[float, operator.add]
 
 # ============================================================================
 # Skill Graph Components
@@ -37,53 +42,92 @@ class AgentState(TypedDict):
 class SkillGraphManager:
     def __init__(self, db_path: str, api_key: str):
         self.registry = ToolRegistry(db_path)
-        safety_settings = {
+        self.api_key = api_key
+        self.model_name = os.getenv("MODEL_NAME", "models/gemini-1.5-flash")
+        self.safety_settings = {
             "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
             "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
             "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
             "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
         }
-        self.llm = ChatGoogleGenerativeAI(
-            model=os.getenv("MODEL_NAME", "gemini-1.5-flash"),
-            google_api_key=api_key,
-            temperature=0,
-            safety_settings=safety_settings
-        )
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model="models/gemini-embedding-001",
             google_api_key=api_key
         )
         self.router = DeterministicRouter(self.registry, self.embeddings)
         self.executor = SafeExecutor()
+        self._set_llm()
+
+    def _set_llm(self):
+        """Initializes the LLM with current model and safety settings."""
+        self.llm = ChatGoogleGenerativeAI(
+            model=self.model_name,
+            google_api_key=self.api_key,
+            temperature=0,
+            safety_settings=self.safety_settings
+        )
+
+    def update_model(self, model_name: str):
+        """Updates the LLM model to a new one."""
+        if self.model_name != model_name:
+            self.model_name = model_name
+            self._set_llm()
 
     def _extract_json(self, content: str) -> Optional[Dict]:
-        """Extracts JSON from LLM response, handling markdown blocks."""
+        """Extracts JSON from LLM response, handling markdown blocks and mixed text."""
         import re
-        # Try finding json code block first
+        # 1. Try finding json code block first
         json_block = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
         if json_block:
             try:
-                return json.loads(json_block.group(1).strip())
+                clean_json = json_block.group(1).strip()
+                return json.loads(clean_json)
             except:
                 pass
         
-        # Fallback to finding outermost braces
-        json_match = re.search(r'\{.*\}', content, re.DOTALL)
-        if json_match:
+        # 2. Try generic code blocks
+        generic_block = re.search(r'```\s*(.*?)\s*```', content, re.DOTALL)
+        if generic_block:
             try:
-                # Try non-greedy if greedy fails? No, json.loads handles trailing.
-                # But json.loads(s) fails if there is "Extra data"
-                # We need to find the balance point.
-                # A simple trick: iterate backwards from the end of the match
-                s = json_match.group()
-                for i in range(len(s), 0, -1):
-                    try:
-                        return json.loads(s[:i])
-                    except:
-                        continue
+                return json.loads(generic_block.group(1).strip())
             except:
                 pass
+
+        # 3. Comprehensive search for any JSON-like structure
+        # Find all indices of '{'
+        start_indices = [m.start() for m in re.finditer(r'\{', content)]
+        for start_idx in start_indices:
+            # Try parsing from this '{' to the end, then shrinking from the right
+            substring = content[start_idx:]
+            # Find all indices of '}' in the substring
+            end_indices = [m.start() for m in re.finditer(r'\}', substring)]
+            # Try from furthest '}' backwards
+            for end_idx in reversed(end_indices):
+                candidate = substring[:end_idx + 1]
+                try:
+                    return json.loads(candidate)
+                except:
+                    # Fallback: try to fix common LLM JSON errors (like unescaped newlines in code strings)
+                    try:
+                        # Replace literal newlines within quotes with \n
+                        # This is a bit risky but can help
+                        fixed = re.sub(r'(?<=[:\s])"(.*?)"(?=[\s,}])', lambda m: m.group(0).replace('\n', '\\n'), candidate, flags=re.DOTALL)
+                        return json.loads(fixed)
+                    except:
+                        continue
         return None
+
+    def _get_usage(self, response: Any) -> Dict[str, Any]:
+        """Extract usage metrics from LLM response."""
+        metadata = getattr(response, 'response_metadata', {})
+        usage = metadata.get('token_usage', {})
+        if usage:
+            in_t = usage.get('prompt_tokens', 0)
+            out_t = usage.get('completion_tokens', 0)
+            # Pricing for Gemini 1.5 Flash (approximate)
+            cost = (in_t * 0.000000075) + (out_t * 0.0000003)
+            return {"input_tokens": in_t, "output_tokens": out_t, "actual_cost": cost}
+        return {"input_tokens": 0, "output_tokens": 0, "actual_cost": 0.0}
 
     async def router_node(self, state: AgentState) -> Dict:
         """Determines routing and checks cache."""
@@ -97,6 +141,12 @@ class SkillGraphManager:
             "selected_tool": tool_data,
             "next_step": "generate" if route == "generate_new" else "extract_params"
         }
+
+        # Savings from deterministic routing (skipping LLM tool matcher)
+        if route != "generate_new":
+            # Estimated cost of an LLM call for routing
+            routing_saving = (500 * 0.000000075) + (100 * 0.0000003)
+            updates["cost_saved"] = routing_saving
 
         return updates
 
@@ -115,7 +165,8 @@ class SkillGraphManager:
         if isinstance(content, list):
             content = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in content])
         
-        updates = {}
+        usage = self._get_usage(response)
+        updates = usage.copy()
         
         params = self._extract_json(content)
         if params:
@@ -126,7 +177,9 @@ class SkillGraphManager:
                 updates.update({
                     "execution_result": cached,
                     "is_cached": True,
-                    "next_step": "summarize"
+                    "next_step": "summarize",
+                    # Savings from not needing to execute or summarize (approximate summary cost)
+                    "cost_saved": (400 * 0.000000075) + (100 * 0.0000003) 
                 })
             else:
                 updates.update({"is_cached": False, "next_step": "execute"})
@@ -138,15 +191,20 @@ class SkillGraphManager:
     async def generate_tool_node(self, state: AgentState) -> Dict:
         """Generates a new reusable tool via LLM."""
         query = state.get("user_query", "")
-        prompt = f"Create a reusable Python tool for: '{query}'. Return JSON with name, description, code, parameters."
+        prompt = (
+            f"Create a reusable Python tool for: '{query}'.\n"
+            "Return ONLY a JSON object with exactly these keys: 'name', 'description', 'code', 'parameters'.\n"
+            "IMPORTANT: The 'code' field must be a single string. Use '\\n' for newlines and ensure all quotes are escaped."
+        )
         
         response = await self.llm.ainvoke([HumanMessage(content=prompt)])
         
         content = response.content
         if isinstance(content, list):
             content = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in content])
-        
-        updates = {}
+            
+        usage = self._get_usage(response)
+        updates = usage.copy()
         
         tool_spec = self._extract_json(content)
         if tool_spec:
@@ -203,6 +261,7 @@ class SkillGraphManager:
         
         prompt = f"Summarize this for user query: '{query}'. Result: {result}"
         response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+        usage = self._get_usage(response)
         
         content = response.content
         if isinstance(content, list):
@@ -210,8 +269,17 @@ class SkillGraphManager:
         
         summary = content
         
+        # Assemble final metrics for possible logging/debugging
+        in_t = state.get("input_tokens", 0) + usage.get("input_tokens", 0)
+        out_t = state.get("output_tokens", 0) + usage.get("output_tokens", 0)
+        total_cost = state.get("actual_cost", 0.0) + usage.get("actual_cost", 0.0)
+        savings = state.get("cost_saved", 0.0)
+        
+        cost_info = f"\n\n--- Cost Metrics ---\nTokens: {in_t} in / {out_t} out\nActual Cost: ${total_cost:.6f}\n**Total Savings: ${savings:.6f}**"
+        
         return {
-            "messages": [AIMessage(content=f"{summary}{cached_tag}")],
+            **usage,
+            "messages": [AIMessage(content=f"{summary}{cached_tag}{cost_info}")],
             "next_step": "end"
         }
 
