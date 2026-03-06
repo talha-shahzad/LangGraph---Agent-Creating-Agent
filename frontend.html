@@ -4,6 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+
     <title>LangGraph Tool Agent</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -245,7 +247,7 @@
                     <div class="space-y-2 text-sm">
                         <div class="flex justify-between">
                             <span class="text-gray-400">Model:</span>
-                            <span class="font-semibold text-[var(--cyan)]">Gemini 1.5 Flash</span>
+                            <span class="font-semibold text-[var(--cyan)]" id="modelName"></span>
                         </div>
                         <div class="flex justify-between">
                             <span class="text-gray-400">API Status:</span>
@@ -292,6 +294,7 @@
     <script>
         const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:3000' : '';
         const sessionId = Math.random().toString(36).substring(7);
+        let sessionSavings = 0;
 
         // Send query to agent
         async function sendQuery() {
@@ -316,16 +319,35 @@
 
                 const data = await response.json();
 
+                // Update savings
+                if (data.cost_metrics && data.cost_metrics.cost_saved) {
+                    sessionSavings += data.cost_metrics.cost_saved;
+                    document.getElementById('totalSavings').textContent = `$${sessionSavings.toFixed(6)}`;
+
+                    // Show small savings toast/console log
+                    console.log('Cost Breakdown:', data.cost_metrics);
+                }
+
                 // Remove loading message
                 removeLastMessage();
 
                 if (data.pending_approval) {
                     addMessage('agent', '🔧 New tool generated! Please review and approve it in the sidebar.');
                     loadPendingTools();
-                } else if (data.result) {
-                    addMessage('agent', data.result);
                 } else {
-                    addMessage('agent', data.message);
+                    // Show the conversational summary
+                    if (data.response) {
+                        addMessage('agent', data.response);
+                    }
+
+                    // Show the raw result if it's useful and different
+                    if (data.result && data.result !== data.response) {
+                        const formattedResult = typeof data.result === 'object'
+                            ? JSON.stringify(data.result, null, 2)
+                            : data.result;
+
+                        addMessage('agent', formattedResult, false, true); // true for isCode
+                    }
                 }
             } catch (error) {
                 removeLastMessage();
@@ -334,7 +356,7 @@
         }
 
         // Add message to chat
-        function addMessage(sender, text, isLoading = false) {
+        function addMessage(sender, text, isLoading = false, isCode = false) {
             const messagesDiv = document.getElementById('chatMessages');
 
             // Remove "Start by asking" message if present
@@ -350,7 +372,7 @@
             bubble.className = `inline-block px-4 py-2 rounded-xl max-w-[85%] ${sender === 'user'
                 ? 'bg-[var(--cyan)] text-[#002b30] font-medium'
                 : 'bg-white/10 text-gray-200 border border-white/10'
-                }`;
+                } ${isCode ? 'font-mono text-xs whitespace-pre-wrap bg-black/50 overflow-x-auto' : ''}`;
 
             if (isLoading) {
                 bubble.innerHTML = `
@@ -360,6 +382,8 @@
                         <span class="dot"></span>
                     </div>
                 `;
+            } else if (isCode) {
+                bubble.innerHTML = `<pre class="m-0">${text}</pre>`;
             } else {
                 bubble.textContent = text;
             }
@@ -565,10 +589,20 @@
         function setQuery(text) {
             document.getElementById('queryInput').value = text;
         }
-
+        function getmodelname() {
+            fetch(`${API_BASE}/api/get-model`)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('modelName').textContent = data.model;
+                })
+                .catch(error => {
+                    console.error('Error getting model name:', error);
+                });
+        }
         // Initialize
         loadPendingTools();
         updateToolsCount();
+        getmodelname();
         setInterval(loadPendingTools, 10000); // Refresh every 10 seconds
     </script>
 </body>

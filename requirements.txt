@@ -22,3 +22,9 @@ pytz
 
 # Optional: typing support (Python >=3.11 has it built-in)
 typing-extensions
+
+# Embeddings and Vector math
+numpy
+scipy
+google-generativeai
+pydantic-settings
