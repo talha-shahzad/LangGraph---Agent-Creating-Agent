@@ -10,7 +10,7 @@ class SafeExecutor:
     
     ALLOWED_MODULES = {
         'json', 'datetime', 'math', 're', 'random', 'requests', 'pytz', 'base64', 'hashlib',
-        'uuid', 'time', 'collections', 'itertools', 'statistics', 'decimal'
+        'uuid', 'time', 'collections', 'itertools', 'statistics', 'decimal', 'pandas', 'numpy'
     }
     
     ALLOWED_BUILTINS = {
@@ -22,6 +22,9 @@ class SafeExecutor:
         'setattr', 'slice', 'sorted', 'str', 'sum', 'tuple', 'type', 'vars', 'zip',
         'dict', 'Exception', 'ValueError', 'TypeError', 'RuntimeError', 'StopIteration'
     }
+
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
 
     @staticmethod
     def _clean_code(code: str) -> str:
@@ -71,8 +74,6 @@ class SafeExecutor:
                         return False
                 
                 # Allow classes and async functions, but still monitor dangerous nodes
-                # Block potentially dangerous things like global/nonlocal in restricted ways if needed
-                # For now, we allow ClassDef as requested by "less vigorous"
                 pass
                     
             return True
@@ -84,56 +85,67 @@ class SafeExecutor:
 
     def execute(self, code: str, func_name: str, params: Dict[str, Any]) -> str:
         """
-        Executes a function from the given code within a restricted namespace.
+        Executes a function from the given code.
+        If self.enabled is True, uses AST validation and restricted namespace.
+        Otherwise, executes in a standard namespace.
         """
-        # Clean the code before validation and execution
         code = self._clean_code(code)
         
-        if not self.validate_code(code):
-            return "Error: Code validation failed. Dangerous operations detected or syntax error."
+        if self.enabled:
+            if not self.validate_code(code):
+                return "Error: Code validation failed. Dangerous operations detected or syntax error."
 
-        # Prepare restricted globals with mapped builtins
-        safe_builtins = {k: __builtins__[k] for k in self.ALLOWED_BUILTINS if k in __builtins__}
-        
-        # Add basic import functionality for allowed modules
-        def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
-            if name in self.ALLOWED_MODULES:
-                return __import__(name, globals, locals, fromlist, level)
-            raise ImportError(f"Module '{name}' is not allowed")
+            # Prepare restricted globals with mapped builtins
+            safe_builtins = {k: __builtins__[k] for k in self.ALLOWED_BUILTINS if k in __builtins__}
+            
+            # Add basic import functionality for allowed modules
+            def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+                if name in self.ALLOWED_MODULES:
+                    return __import__(name, globals, locals, fromlist, level)
+                raise ImportError(f"Module '{name}' is not allowed")
 
-        safe_builtins['__import__'] = safe_import
-        
-        restricted_globals = {
-            '__builtins__': safe_builtins,
-        }
-        
-        # Add allowed modules to namespace
-        import importlib
-        for module in self.ALLOWED_MODULES:
-            try:
-                restricted_globals[module] = importlib.import_module(module)
-            except ImportError:
-                continue
+            safe_builtins['__import__'] = safe_import
+            
+            restricted_globals = {
+                '__builtins__': safe_builtins,
+            }
+            
+            # Add allowed modules to namespace
+            import importlib
+            for module in self.ALLOWED_MODULES:
+                try:
+                    restricted_globals[module] = importlib.import_module(module)
+                except ImportError:
+                    continue
+        else:
+            # Standard namespace for unrestricted execution
+            restricted_globals = {
+                '__builtins__': __builtins__,
+                'logging': logging,
+                'json': json,
+            }
+            # Attempt to import some common things automatically if security is off
+            import importlib
+            for module in ['requests', 'pandas', 'numpy', 'datetime', 'math', 're', 'os', 'sys']:
+                try:
+                    restricted_globals[module] = importlib.import_module(module)
+                except ImportError:
+                    continue
 
         try:
-            # Execute the code to define the function in our restricted namespace
+            # Execute the code to define the function
             tree = ast.parse(code)
             exec(compile(tree, filename="<string>", mode="exec"), restricted_globals)
             
             # Auto-detect function name if the provided one is missing
             if func_name not in restricted_globals:
-                # Find all top-level functions defined in the code
                 functions = [node.name for node in tree.body if isinstance(node, ast.FunctionDef)]
                 if functions:
-                    # Use the first function found as a fallback
                     func_name = functions[0]
-                    logging.info(f"Auto-detected function name: {func_name}")
                 else:
-                    # Maybe it's a class?
                     classes = [node.name for node in tree.body if isinstance(node, ast.ClassDef)]
                     if classes:
                         func_name = classes[0]
-                        logging.info(f"Auto-detected class/constructor name: {func_name}")
                     else:
                         return f"Error: No function or class definition found in generated code."
             
@@ -142,7 +154,6 @@ class SafeExecutor:
             
             obj = restricted_globals[func_name]
             
-            # Execute the function or instantiate the class
             if callable(obj):
                 result = obj(**params)
                 return str(result)

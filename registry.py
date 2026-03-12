@@ -238,6 +238,23 @@ class ToolRegistry:
         conn.close()
         return True
 
+    def delete_tool(self, name: str) -> bool:
+        """Permanently delete a tool and its pending approval status."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM tools WHERE name = ?", (name,))
+            cur.execute("DELETE FROM pending_approvals WHERE tool_name = ?", (name,))
+            # Also clear tool execution history for this tool
+            cur.execute("DELETE FROM tool_executions WHERE tool_name = ?", (name,))
+            conn.commit()
+            conn.close()
+            logging.info(f"Tool {name} deleted from registry")
+            return True
+        except Exception as e:
+            logging.error(f"Error deleting tool {name}: {e}")
+            return False
+
     def add_pending_approval(self, tool_name: str, session_id: str) -> bool:
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()

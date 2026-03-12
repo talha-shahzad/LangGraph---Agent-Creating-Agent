@@ -28,6 +28,12 @@ class ToolApproval(BaseModel):
     approved: bool
     approved_by: str
 
+class ToolDeletion(BaseModel):
+    tool_name: str
+
+class SecurityStatus(BaseModel):
+    enabled: bool
+
 class QueryResponse(BaseModel):
     success: bool
     message: str
@@ -150,6 +156,21 @@ async def approve_tool(approval: ToolApproval):
     else:
         success = manager.registry.reject_tool(approval.tool_name)
         message = "Tool rejected"
+    return {"success": success, "message": message}
+
+@app.get("/api/security-status")
+async def get_security_status():
+    return {"success": True, "enabled": manager.executor.enabled}
+
+@app.post("/api/toggle-security")
+async def toggle_security(status: SecurityStatus):
+    manager.executor.enabled = status.enabled
+    return {"success": True, "enabled": manager.executor.enabled, "message": f"Security is now {'enabled' if manager.executor.enabled else 'disabled'}"}
+
+@app.post("/api/delete-tool")
+async def delete_tool(deletion: ToolDeletion):
+    success = manager.registry.delete_tool(deletion.tool_name)
+    message = f"Tool {deletion.tool_name} deleted" if success else f"Failed to delete tool {deletion.tool_name}"
     return {"success": success, "message": message}
 
 @app.get("/api/get-model")

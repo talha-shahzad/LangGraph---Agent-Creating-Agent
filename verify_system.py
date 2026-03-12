@@ -62,7 +62,7 @@ async def verify_system():
         print(f"Is Cached: {result3.get('is_cached')}")
         
     print("\n--- Phase 4: Security Check ---")
-    bad_code = "import os; os.system('ls')"
+    bad_code = "os.system('ls')"
     from security import SafeExecutor
     executor = SafeExecutor()
     validation = executor.validate_code(bad_code)
